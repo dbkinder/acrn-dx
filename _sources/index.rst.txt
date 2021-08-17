@@ -1,7 +1,7 @@
 .. _acrn_home:
 
-Project ACRN Documentation
-##########################
+[DX Only] Project ACRN Documentation
+#####################################
 
 Welcome to the Project ACRN (version |version|) documentation.  ACRN is
 a flexible, lightweight reference hypervisor, built with real-time and

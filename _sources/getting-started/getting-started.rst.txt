@@ -1,3 +1,5 @@
+:orphan:
+
 .. _gsg:
 .. _rt_industry_ubuntu_setup:
 

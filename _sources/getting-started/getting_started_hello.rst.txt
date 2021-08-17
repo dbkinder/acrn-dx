@@ -1,0 +1,698 @@
+.. _gsg_hello:
+
+Getting Started Guide
+#####################
+
+This guide will help you get started with ACRN. We'll show how to prepare a
+build environment on your development computer. Then we'll walk through the
+steps to set up an ACRN predefined **shared** scenario on a target system and
+run the ACRN hypervisor, Service VM, and one Ubuntu User VM, as
+illustrated in this figure:
+
+.. image:: ./images/gsg_scenario.png
+   :scale: 80%
+
+Throughout this guide, you will be exposed to some of the tools, processes, and
+components of the ACRN project. Let's get started.
+
+Prerequisites
+**************
+
+You will need a two machines: a development computer and a target machine. The
+development computer is where you configure and build ACRN and your application.
+The target machine is where you deploy and run ACRN and your application. Before
+you begin, make sure your machines have the following prerequisites:
+
+**Development computer**:
+
+* Hardware specifications
+
+  - A PC with Internet access
+
+* Software specifications
+
+  - Ubuntu Desktop 18.04 or newer
+
+  .. note::
+
+     While ACRN development is not supported on Windows, you can use Windows
+     Subsystem for Linux (WSL).
+
+**Target machine**:
+
+* Hardware specifications
+
+  - Target board (see :ref:`hardware_tested`)
+  - Monitor
+  - Serial-to-USB cable (optional)
+  - Ethernet cable and Internet access
+  - USB keyboard and mouse
+  - Ubuntu 18.04 bootable USB disk (see `Ubuntu documentation
+    <https://ubuntu.com/tutorials/create-a-usb-stick-on-ubuntu#1-overview>`__
+    for instructions)
+  - A second USB disk with minimum 1GB capacity to copy files between the
+    development computer and target machine
+  - Local storage device (NVMe or SATA drive, for example)
+
+.. rst-class:: numbered-step
+
+Set Up the Hardware
+*******************
+
+Set up the hardware environment as follows:
+
+#. Connect the mouse, keyboard, monitor, and power supply cable to the target
+   machine.
+
+#. Connect the target machine to the LAN with the Ethernet cable.
+
+#. (Optional) Connect the serial cable between the target and development
+   computer to view the ACRN and VM console (see :ref:`connect_serial_port`).
+
+Example of a target machine with cables connected:
+
+.. image:: ./images/gsg_nuc.png
+   :scale: 25%
+
+.. rst-class:: numbered-step
+
+Prepare the Development Computer
+********************************
+
+Follow these instructions to set up the ACRN build environment on the
+development computer:
+
+#. On the development computer, run the following command to confirm that Ubuntu
+   Desktop 18.04 or newer is running:
+
+   .. code-block:: bash
+
+      cat /etc/os-release
+
+   If you have an older version, see `Ubuntu documentation
+   <https://ubuntu.com/tutorials/install-ubuntu-desktop#1-overview>`__ to
+   install a new OS on the development computer.
+
+#. Update Ubuntu with any outstanding patches, and install the necessary ACRN
+   build tools and dependencies:
+
+   .. code-block:: bash
+
+      sudo apt update
+      sudo apt upgrade -y
+      sudo apt install gcc \
+           git \
+           make \
+           libssl-dev \
+           libpciaccess-dev \
+           uuid-dev \
+           libsystemd-dev \
+           libevent-dev \
+           libxml2-dev \
+           libxml2-utils \
+           libusb-1.0-0-dev \
+           python3 \
+           python3-pip \
+           libblkid-dev \
+           e2fslibs-dev \
+           pkg-config \
+           libnuma-dev \
+           liblz4-tool \
+           flex \
+           bison \
+           xsltproc \
+           clang-format
+      sudo pip3 install lxml xmlschema
+
+#. Install the iASL compiler/disassembler used for advanced power management,
+   device discovery, and configuration (ACPI) within the host OS:
+
+   .. code-block:: bash
+
+      mkdir ~/acrn-work
+      cd ~/acrn-work
+      wget https://acpica.org/sites/acpica/files/acpica-unix-20210105.tar.gz
+      tar zxvf acpica-unix-20210105.tar.gz
+      cd acpica-unix-20210105
+      make clean && make iasl
+      sudo cp ./generate/unix/bin/iasl /usr/sbin
+
+#. Get the ACRN hypervisor and kernel source code:
+
+   .. code-block:: bash
+
+      cd ~/acrn-work
+      git clone https://github.com/projectacrn/acrn-hypervisor
+      cd acrn-hypervisor
+      git checkout d07bd78b132f2b86bd6aa5ad08949fe5c785535e
+
+      cd ..
+      git clone --depth 1 https://github.com/projectacrn/acrn-kernel
+      cd acrn-kernel
+      git checkout acrn-2021w30.1-180000p
+
+.. rst-class:: numbered-step
+
+Generate the Board Configuration File
+*************************************
+
+Install OS on the Target
+============================
+
+Ubuntu 18.04 is required on the target machine. Follow the instructions below to
+install it.
+
+#. Insert the Ubuntu USB boot disk into the target machine.
+
+#. Power on the machine, and select the USB disk as the boot device in the UEFI
+   menu. Note that the USB disk label presented in the boot options depends on
+   the brand/make of the USB drive. (You will need to configure the BIOS to boot
+   off the USB device first, if that option isn't available.)
+
+#. After selecting the language and keyboard layout, select the **Normal
+   installation** and **Download updates while installing Ubuntu** (downloading
+   updates requires the target to have an internet connection).
+
+   .. image:: ./images/gsg_ubuntu_install_01.png
+
+#. Use the checkboxes to choose whether you'd like to install Ubuntu alongside
+   another operating system, or delete your existing operating system and
+   replace it with Ubuntu:
+
+   .. image:: ./images/gsg_ubuntu_install_02.jpg
+      :scale: 85%
+
+#. Complete the Ubuntu installation and create a new user account ``acrn`` and
+   set a password.
+
+#. The next section shows how to configure BIOS settings.
+
+Configure Target BIOS
+===========================
+
+When you are booting your target, you’ll see an option (quickly) to enter
+the BIOS configuration editor, typically by pressing F2 during the boot and
+before the GRUB menu (or Ubuntu login screen) appears.
+
+Boot your target, and configure these BIOS settings:
+
+* Enable **VMX** (Virtual Machine Extensions, which provide hardware assist for
+  CPU virtualization)
+* Enable **VT-d** (Virtual Technology for Directed I/O, which
+  provides additional support for managing I/O virtualization).
+* Disable **Secure Boot**. This simplifies the steps for this example.
+
+The names and locations of the BIOS settings differ depending on the target
+hardware and BIOS version. You can search for the items in the BIOS
+configuration screen.
+
+For example, on a Tiger Lake NUC, quickly press :kbd:`F2` while the system is
+booting. (If the GRUB menu or Ubuntu login screen
+appears, press :kbd:`CTRL` + :kbd:`ALT` + :kbd:`DEL` to reboot again and press
+:kbd:`F2` sooner.) The settings are in the following paths:
+
+* **System Agent (SA) Configuration** > **VT-d** > **Enabled**
+* **CPU Configuration** > **VMX** > **Enabled**
+* **Boot** > **Secure Boot** > **Secure Boot** > **Disabled**
+
+Other BIOS settings, such as Hyper-Threading can also be set, depending on the
+needs of your application.
+
+Generate Board XML with Board Inspector
+=========================================
+
+The board inspector collects board-specific information on the target machine
+and generates a board XML file. Whenever you change the configuration of the
+board, such as BIOS settings, additional memory, or PCI devices, you must
+generate a new board XML file.
+
+To generate a board XML file:
+
+#. On the target machine, install the board inspector dependencies:
+
+   .. code-block:: bash
+
+      sudo apt install cpuid msr-tools pciutils dmidecode python3 python3-pip
+      sudo modprobe msr
+      sudo pip3 install lxml
+
+#. Configure the GRUB kernel command line as follows:
+
+   a. Edit the ``grub`` file. The following command uses ``vi``, but you can use any
+      text editor.
+
+      .. code-block:: bash
+
+         sudo vi /etc/default/grub
+
+   #. Find the line starting with ``GRUB_CMDLINE_LINUX_DEFAULT`` and append:
+
+      .. code-block:: bash
+
+         idle=nomwait intel_idle.max_cstate=0 intel_pstate=disable
+
+      Example:
+
+      .. code-block:: bash
+
+         GRUB_CMDLINE_LINUX_DEFAULT="quiet splash idle=nomwait intel_idle.max_cstate=0 intel_pstate=disable"
+
+      These settings on the target machine allow the board inspector tool to
+      gather important information about the board. You can restore the previous
+      settings after completing this guide.
+
+   #. Save and close the file.
+
+   #. Update GRUB and reboot the system:
+
+      .. code-block:: bash
+
+         sudo update-grub
+         reboot
+
+#. Copy the board inspector tool folder from the development computer to the
+   target via USB disk:
+
+   a. Move to the development computer.
+
+   #. On the development computer, ensure that there is only one USB disk
+      inserted by running the following command:
+
+      .. code-block:: bash
+
+         ls /media/${USER}
+
+      Confirm that one disk name appears. You'll use that ``<USB disk name>`` in
+      the following steps.
+
+   #. Copy the board inspector tool folder from the acrn-hypervisor source code to the USB disk:
+
+      .. code-block:: bash
+
+         cd ~/acrn-work/
+         cp -r acrn-hypervisor/misc/config_tools/board_inspector/ /media/${USER}/<usb disk name>/
+         sudo umount /media/${USER}/<usb disk name>
+
+   #. Insert the USB disk into the target machine.
+
+   #. Copy the board inspector tool from the USB disk to the target:
+
+      .. code-block:: bash
+
+         mkdir ~/acrn-work
+         cp -r /media/${USER}/<usb disk name>/board_inspector ~/acrn-work
+
+#. On the target, run the following commands to launch ``cli.py`` (the board
+   inspector tool). The parameter ``my_board`` is an example of an output board
+   XML file name.
+
+   .. code-block:: bash
+
+      cd ~/acrn-work/board_inspector/
+      sudo python3 cli.py my_board
+
+#. Confirm that the output file ``my_board.xml`` appears in the current directory.
+
+#. Copy the board XML from the target to the development computer via USB disk:
+
+   a. Make sure the USB disk is connected to the target.
+
+   a. Copy the board XML to the USB disk:
+
+      .. code-block:: bash
+
+         cp ~/acrn-work/board_inspector/my_board.xml /media/${USER}/<usb disk name>/
+         sudo umount /media/${USER}/<usb disk name>
+
+   #. Insert the USB disk into the development computer.
+
+   #. Copy the board XML from the USB disk to the development computer:
+
+      .. code-block:: bash
+
+         cp /media/${USER}/<usb disk name>/my_board.xml ~/acrn-work
+         sudo umount /media/${USER}/<usb disk name>
+
+.. rst-class:: numbered-step
+
+Generate Scenario File and Launch Script
+*********************************************
+
+#. On the development computer, install ACRN configuration editor dependencies:
+
+   .. code-block:: bash
+
+      cd ~/acrn-work/acrn-hypervisor/misc/config_tools/config_app
+      sudo pip3 install -r requirements
+
+#. Launch the ACRN configuration editor:
+
+   .. code-block:: bash
+
+      python3 app.py
+
+#. Your web browser should open the website `<http://127.0.0.1:5001/>`__
+   automatically, or you may need to visit this website manually.
+
+   .. note::
+
+      The ACRN configuration editor is supported on Chrome and Firefox.
+
+   The browser-based configuration editor interface:
+
+   .. image:: ./images/gsg_config_01.png
+
+#. Click the **Import Board info** button and browse to the board XML previously
+   generated. When it is successfully imported, the board information appears.
+   Example:
+
+   .. image:: ./images/gsg_config_board.png
+
+#. Generate the scenario XML file:
+
+   a. Click the **Scenario Setting** menu on the top banner of the UI and select
+      **Load a default scenario**. Example:
+
+      .. image:: ./images/gsg_config_scenario_default.png
+
+   #. In the dialog box, select **industry** as the default scenario setting and click **OK**.
+
+      .. image:: ./images/gsg_config_scenario_load.png
+
+   #. The scenario's configurable items appear. Feel free to look through all
+      the available configuration settings used in this sample scenario. This
+      is where you can change the sample scenario to meet your application's
+      particular needs. But for now, let's leave them as they're set in the
+      sample.
+
+   #. Click the **Export XML** button to save the scenario XML that will be
+      used in the build process.
+
+   #. In the dialog box, keep the default name as is. Type
+      ``/home/<username>/acrn-work`` in the Scenario XML Path field. In the
+      following example, acrn is the username. Click **Submit** to save the
+      file.
+
+      .. image:: ./images/gsg_config_scenario_save.png
+
+   #. Confirm that ``industry.xml`` appears in the directory ``/home/<username>/acrn-work``.
+
+#. Generate the launch script:
+
+   a. Click the **Launch Setting** menu on the top banner of the UI and select
+      **Load a default launch script**.
+
+      .. image:: ./images/gsg_config_launch_default.png
+
+   #. In the dialog box, select **industry_launch_6uos** as the default launch
+      setting and click **OK**.
+
+      .. image:: ./images/gsg_config_launch_load.png
+
+   #. Click the **Generate Launch Script** button.
+
+      .. image:: ./images/gsg_config_launch_generate.png
+
+   #. In the dialog box, type ``/home/<username>/acrn-work/`` in the Source Path
+      field. In the following example, ``acrn`` is the username. Click **Submit**
+      to save the script.
+
+      .. image:: ./images/gsg_config_launch_save.png
+
+   #. Confirm that ``launch_uos_id3.sh`` appears in the directory
+      ``/home/<username>/acrn-work/my_board/output/``.
+
+#. Close the browser and press :kbd:`CTRL` + :kbd:`C` to terminate the ``app.py``
+   program running in the terminal window.
+
+.. rst-class:: numbered-step
+
+Build ACRN
+***************
+
+You will build the ACRN hypervisor and kernel on the development computer.
+
+#. On the development computer, build the ACRN hypervisor:
+
+   .. code-block:: bash
+
+      cd ~/acrn-work/acrn-hypervisor
+      make -j $(nproc) BOARD=~/acrn-work/my_board.xml SCENARIO=~/acrn-work/industry.xml
+      make targz-pkg
+
+   The build typically takes a few minutes. By default, the build results are
+   found in the build directory. For convenience, we also built a compressed tar
+   file to ease copying files to the target.
+
+#. Build the ACRN kernel for the service VM:
+
+   .. code-block:: bash
+
+      cd ~/acrn-work/acrn-kernel
+      cp kernel_config_uefi_sos .config
+      make olddefconfig
+      make -j $(nproc) targz-pkg
+
+   The build can take 1-3 hours depending on the performance of your development
+   computer and network.
+
+#. Copy all the necessary files generated on the development computer to the
+   target machine by USB disk:
+
+   a. Insert the USB disk into the development computer and run these commands:
+
+      .. code-block:: bash
+
+         sudo cp linux-5.10.47-acrn-sos-x86.tar.gz /media/${USER}/<usb disk name>/
+         sudo cp ~/acrn-work/acrn-hypervisor/build/hypervisor/acrn.bin /media/${USER}/<usb disk name>/
+         sudo cp ~/acrn-work/my_board/output/launch_uos_id3.sh /media/${USER}/<usb disk name>/
+         sudo cp ~/acrn-work/acpica-unix-20210105/generate/unix/bin/iasl /media/${USER}/<usb disk name>/
+         sudo cp ~/acrn-work/acrn-hypervisor/build/acrn-2.6-unstable.tar.gz /media/${USER}/<usb disk name>/
+         sync && cd ~ && sudo umount /media/${USER}/<usb disk name>/
+
+   #. Insert the USB disk you just used into the target machine and run these commands:
+
+      .. code-block:: bash
+
+         sudo cp /media/${USER}/<usb disk name>/linux-5.10.47-acrn-sos-x86.tar.gz ~/acrn-work
+         sudo cp /media/${USER}/<usb disk name>/acrn-2.6-unstable.tar.gz ~/acrn-work
+         cd ~/acrn-work
+         sudo tar -zxvf linux-5.10.47-acrn-sos-x86.tar.gz -C /
+         sudo tar -zxvf acrn-2.6-unstable.tar.gz -C /
+         sudo mkdir -p /boot/acrn/
+         sudo cp /media/${USER}/<usb disk name>/acrn.bin /boot/acrn
+         sudo cp /media/${USER}/<usb disk name>/launch_uos_id3.sh ~/acrn-work
+         sudo cp /media/${USER}/<usb disk name>/iasl /usr/sbin/
+         sudo umount /media/${USER}/<usb disk name>/
+
+.. rst-class:: numbered-step
+
+Install ACRN
+*****************
+
+In the following steps, you will configure GRUB on the target machine.
+
+#. On the target, run the following command to get the rootfs partition:
+
+   .. code-block:: bash
+
+      sudo lsblk
+
+   In the output, look for the partition that has the "/" mount point. In the
+   following example, the partition is ``/dev/nvme0n1p3``. You will need this in
+   the next step.
+
+   .. image:: ./images/gsg_rootfs.png
+
+#. Run the following command to get the UUID and PARTUUID for rootfs. Replace
+   ``<rootfs partition>`` with the output from the previous step.
+
+   .. code-block:: bash
+
+      sudo blkid /dev/<rootfs partition>
+
+   In the output, look for the UUID and PARTUUID (example below). You will need
+   them in the next step.
+
+   .. code-block:: console
+
+      /dev/nvme0n1p3: UUID="3cac5675-e329-4cal-b346-0a3e65f99016" TYPE="ext4" PARTUUID="03db7f45-8a6c-454b-adf7-30343d82c4f4"
+
+#. Add ACRN to the GRUB menu:
+
+   a. Open the GRUB 40_custom file. The following command uses vi, but you can
+      use any text editor.
+
+      .. code-block:: bash
+
+         sudo vi /etc/grub.d/40_custom
+
+   #. Add the following text at the end of the file. Replace ``<UUID>`` and
+      ``<PARTUUID>`` with the output from the previous step.
+
+      .. code-block:: bash
+         :emphasize-lines: 6,8
+
+         menuentry "ACRN Multiboot Ubuntu Service VM" --id ubuntu-service-vm {
+           load_video
+           insmod gzio
+           insmod part_gpt
+           insmod ext2
+           search --no-floppy --fs-uuid --set <UUID>
+           echo 'loading ACRN...'
+           multiboot2 /boot/acrn/acrn.bin  root=PARTUUID=<PARTUUID>
+           module2 /boot/vmlinuz-5.10.47-acrn-sos Linux_bzImage
+         }
+
+   #. Save and close the file.
+
+#. Modify the ``/etc/default/grub`` file to make the GRUB menu visible when
+   booting and make it load the Service VM kernel by default. Follow these
+   steps:
+
+   a. Edit the ``grub`` file:
+
+      .. code-block:: bash
+
+         sudo vi /etc/default/grub
+
+   #. Edit these items:
+
+      .. code-block:: bash
+
+         GRUB_DEFAULT=ubuntu-service-vm
+         #GRUB_TIMEOUT_STYLE=hidden
+         GRUB_TIMEOUT=5
+         GRUB_CMDLINE_LINUX="text"
+
+   #. Save and close the file.
+
+#. Update GRUB and reboot the system:
+
+   .. code-block:: bash
+
+      sudo update-grub
+      reboot
+
+#. Confirm that you see the GRUB menu with the "ACRN Multiboot Ubuntu Service
+   VM" entry. Select it and proceed to booting ACRN.
+
+.. rst-class:: numbered-step
+
+Run ACRN and the Service VM
+******************************
+
+When the ACRN hypervisor starts to boot, the ACRN console log will be displayed
+to the serial port (optional). The ACRN hypervisor boots the Service VM
+automatically.
+
+#. On the target, log in to the Service VM.
+
+#. Verify that the hypervisor is running by checking ``dmesg`` in
+   the Service VM:
+
+   .. code-block:: bash
+
+      dmesg | grep ACRN
+
+   You should see "Hypervisor detected: ACRN" in the output. Example output of a
+   successful installation:
+
+   .. code-block:: console
+
+      [    0.000000] Hypervisor detected: ACRN
+      [    0.862942] ACRN HVLog: acrn_hvlog_init
+
+.. rst-class:: numbered-step
+
+Launch User VM
+**************
+
+#. A User VM image is required on the target machine before launching it. The
+   following steps use Ubuntu:
+
+   a. Go to the `official Ubuntu website
+      <https://releases.ubuntu.com/bionic>`__ to get an ISO format of the Ubuntu
+      18.04 desktop image.
+
+   #. Put the ISO file in the path ``~/acrn-work/`` on the target machine.
+
+#. Open the launch script in a text editor. The following command uses vi, but
+   you can use any text editor.
+
+   .. code-block:: bash
+
+      vi ~/acrn-work/launch_uos_id3.sh
+
+#. Add the ISO image file name to the launch script. In the following example, the
+   ISO image file name is ``/home/acrn/acrn-work/ubuntu-18.04.5-desktop-amd64.iso``.
+
+   .. code-block:: bash
+      :emphasize-lines: 4
+
+      acrn-dm -A -m $mem_size -s 0:0,hostbridge -U 615db82a-e189-4b4f-8dbb-d321343e4ab3 \
+         --mac_seed $mac_seed \
+         $logger_setting \
+         -s 7,virtio-blk,/home/acrn/acrn-work/ubuntu-18.04.5-desktop-amd64.iso \
+         -s 8,virtio-net,tap_YaaG3 \
+         -s 6,virtio-console,@stdio:stdio_port \
+         --ovmf /usr/share/acrn/bios/OVMF.fd \
+         -s 31:0,lpc \
+         $vm_name
+
+#. Save and close the file.
+
+#. Launch the User VM:
+
+   .. code-block:: bash
+
+      sudo chmod +x ~/acrn-work/launch_uos_id3.sh
+      sudo chmod +x /usr/bin/acrn-dm
+      sudo chmod +x /usr/sbin/iasl
+      sudo ~/acrn-work/launch_uos_id3.sh
+
+#. Confirm that you see the console of the User VM on the Service VM's terminal
+   (on the monitor connected to the target machine). Example:
+
+   .. code-block:: console
+
+      Ubuntu 18.04.5 LTS ubuntu hvc0
+
+      ubuntu login:
+
+#. Log in to the User VM. For the Ubuntu 18.04 ISO, the user is ``ubuntu``, and
+   there's no password.
+
+#. Confirm that you see output similar to this example:
+
+   .. code-block:: console
+
+      Welcome to Ubuntu 18.04.5 LTS (GNU/Linux 5.4.0-42-generic x86_64)
+
+      * Documentation:  https://help.ubuntu.com
+      * Management:     https://landscape.canonical.com
+      * Support:        https://ubuntu.com/advantage
+
+      0 packages can be updated.
+      0 updates are security updates.
+
+      Your Hardware Enablement Stack (HWE) is supported until April 2023.
+
+      The programs included with the Ubuntu system are free software;
+      the exact distribution terms for each program are described in the
+      individual files in /usr/share/doc/*/copyright.
+
+      Ubuntu comes with ABSOLUTELY NO WARRANTY, to the extent permitted by
+      applicable law.
+
+      To run a command as administrator (user "root"), use "sudo <command>".
+      See "man sudo_root" for details.
+
+      ubuntu@ubuntu:~$
+
+The guest VM has launched successfully.
+
+Next Steps
+**************
+
+For an overview of the ACRN configuration process, see :ref:`overview_dev`.
